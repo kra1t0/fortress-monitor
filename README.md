@@ -121,4 +121,4 @@ Edit the `Config` class inside the script:
 
 ---
 
-Colloborated project with [text](https://github.com/DDC2000) @DDC2000
+Colloborated project with [@DDC2000](https://github.com/DDC2000)
