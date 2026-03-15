@@ -825,16 +825,14 @@ class BruteForceTracker:
         self.logs.success.info(log_entry)
         self.logs.main.info(f"✅ SUCCESSFUL LOGIN | {log_entry}")
 
-        should_alert_login = (
-            Config.LOGIN_ALERTS_ENABLED
-            and (
-                Config.WEBHOOK_ENABLED
-                or getattr(Config, "EMAIL_ENABLED", False)
-                or getattr(Config, "DESKTOP_NOTIFY", False)
-            )
+        channel_active = (
+            Config.WEBHOOK_ENABLED
+            or getattr(Config, "EMAIL_ENABLED", False)
+            or getattr(Config, "DESKTOP_NOTIFY", False)
         )
+        should_alert_login = Config.LOGIN_ALERTS_ENABLED and channel_active
 
-        if Config.LOGIN_ALERTS_ENABLED and not should_alert_login and not self._login_alert_channel_warned:
+        if Config.LOGIN_ALERTS_ENABLED and not channel_active and not self._login_alert_channel_warned:
             self.logs.main.warning(
                 "Login alerts are enabled but no notification channel is active. "
                 "Enable WEBHOOK_ENABLED, EMAIL_ENABLED, or DESKTOP_NOTIFY to receive login alerts."
@@ -872,7 +870,7 @@ class BruteForceTracker:
         def _ts(item):
             try:
                 return datetime.fromisoformat(item[1].get("last_seen", ""))
-            except Exception:
+            except (TypeError, ValueError):
                 return datetime.min
 
         oldest_ips = sorted(detail_map.items(), key=_ts)[:over_by]
