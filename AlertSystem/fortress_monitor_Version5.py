@@ -53,6 +53,7 @@ import socket
 import smtplib
 import subprocess
 import hashlib
+import heapq
 from datetime import datetime, timedelta
 from collections import defaultdict
 from email.mime.text import MIMEText
@@ -109,6 +110,8 @@ class Config:
     # ---- Webhook Alerts ----
     WEBHOOK_ENABLED = False
     WEBHOOK_URL = ""
+    # Send a notification for every successful login (alongside attack alerts)
+    LOGIN_ALERTS_ENABLED = False
 
     # ---- Auto-Ban ----
     AUTO_BAN_ENABLED = True
@@ -465,6 +468,7 @@ class BruteForceTracker:
         self.alerted_ips = {}                       # ip -> last_alert_time
         self.banned_ips = set()
         self.lock = Lock()
+        self._login_alert_channel_warned = False
 
         # Per-cycle stats
         self._init_cycle_stats()
@@ -490,6 +494,8 @@ class BruteForceTracker:
             "attacker_countries": defaultdict(int),
             "attacker_isps": defaultdict(int),
             "methods_seen": defaultdict(int),
+            "attacker_details": {},
+            "success_details": {},
         }
 
     def _load_lifetime_state(self):
@@ -552,6 +558,8 @@ class BruteForceTracker:
             cycle_num = self.lifetime.get("cycle_number", 0) + 1
 
             # ---- Build the snapshot ----
+            attacker_details = self.stats["attacker_details"]
+            success_details = self.stats["success_details"]
             snapshot = {
                 "cycle_number": cycle_num,
                 "refresh_reason": reason,
@@ -575,8 +583,22 @@ class BruteForceTracker:
                     sorted(self.stats["attacker_isps"].items(), key=lambda x: -x[1])[:30]
                 ),
                 "methods_seen": dict(self.stats["methods_seen"]),
-                "all_attacker_ips": list(self.stats["unique_attacker_ips"]),
-                "all_success_ips": list(self.stats["unique_success_ips"]),
+                "all_attacker_ips": [
+                    {
+                        "ip": ip,
+                        "location": attacker_details.get(ip, {}).get("location", "Unknown"),
+                        "last_seen": attacker_details.get(ip, {}).get("last_seen"),
+                    }
+                    for ip in sorted(self.stats["unique_attacker_ips"])
+                ],
+                "all_success_ips": [
+                    {
+                        "ip": ip,
+                        "location": success_details.get(ip, {}).get("location", "Unknown"),
+                        "last_seen": success_details.get(ip, {}).get("last_seen"),
+                    }
+                    for ip in sorted(self.stats["unique_success_ips"])
+                ],
                 "lifetime_stats": dict(self.lifetime),
             }
 
@@ -640,6 +662,8 @@ class BruteForceTracker:
     def record_failure(self, ip, user, port, method, raw_line, timestamp=None):
         """Record a failed login attempt and check for brute force."""
         ts = timestamp or time.time()
+        event_dt = datetime.fromtimestamp(ts)
+        event_time_str = event_dt.strftime("%Y-%m-%d %H:%M:%S")
 
         with self.lock:
             self.stats["total_failed"] += 1
@@ -669,11 +693,18 @@ class BruteForceTracker:
             isp = geo.get("isp", "Unknown")
             if isp != "Unknown":
                 self.stats["attacker_isps"][isp] += 1
+            self.stats["attacker_details"][ip] = {
+                "location": location,
+                "last_seen": event_dt.isoformat(),
+                "last_seen_ts": ts,
+            }
+            self._prune_details(self.stats["attacker_details"])
 
         # Log every single failed attempt (this goes to disk immediately — never lost)
         log_entry = (
             f"IP={ip} | User={user} | Port={port} | Method={method} | "
             f"Location={location} | "
+            f"AttemptTime={event_time_str} | "
             f"Attempts={attempt_count}/{Config.MAX_FAILED_ATTEMPTS} | "
             f"Cycle={current_count:,}/{Config.MAX_TRACKED_ATTEMPTS:,} | "
             f"Raw={raw_line.strip()}"
@@ -766,6 +797,9 @@ class BruteForceTracker:
 
     def record_success(self, ip, user, port, method, raw_line):
         """Record a successful login."""
+        ts = time.time()
+        event_dt = datetime.fromtimestamp(ts)
+        event_time_str = event_dt.strftime("%Y-%m-%d %H:%M:%S")
         geo = self.geo.lookup(ip)
         location = self.geo.format_location(geo)
 
@@ -773,6 +807,12 @@ class BruteForceTracker:
             self.stats["total_success"] += 1
             self.stats["unique_success_ips"].add(ip)
             self.cycle_attempt_count += 1
+            self.stats["success_details"][ip] = {
+                "location": location,
+                "last_seen": event_dt.isoformat(),
+                "last_seen_ts": ts,
+            }
+            self._prune_details(self.stats["success_details"])
             current_count = self.cycle_attempt_count
 
         log_entry = (
@@ -781,11 +821,36 @@ class BruteForceTracker:
             f"Country={geo.get('country', '?')} | City={geo.get('city', '?')} | "
             f"Region={geo.get('region', '?')} | ISP={geo.get('isp', '?')} | "
             f"VPN/Proxy={'YES' if geo.get('is_proxy') else 'No'} | "
+            f"AttemptTime={event_time_str} | "
             f"Cycle={current_count:,}/{Config.MAX_TRACKED_ATTEMPTS:,} | "
             f"Raw={raw_line.strip()}"
         )
         self.logs.success.info(log_entry)
         self.logs.main.info(f"✅ SUCCESSFUL LOGIN | {log_entry}")
+
+        channel_active = (
+            Config.WEBHOOK_ENABLED
+            or getattr(Config, "EMAIL_ENABLED", False)
+            or getattr(Config, "DESKTOP_NOTIFY", False)
+        )
+        should_alert_login = Config.LOGIN_ALERTS_ENABLED and channel_active
+
+        if Config.LOGIN_ALERTS_ENABLED and not channel_active:
+            with self.lock:
+                if not self._login_alert_channel_warned:
+                    self.logs.main.warning(
+                        "Login alerts are enabled but no notification channel is active. "
+                        "Enable WEBHOOK_ENABLED, EMAIL_ENABLED, or DESKTOP_NOTIFY to receive login alerts."
+                    )
+                    self._login_alert_channel_warned = True
+
+        if should_alert_login:
+            self.notifier.send_alert(
+                f"LOGIN from {ip}",
+                f"User: {user}\nMethod: {method}\nTime: {event_time_str}\nLocation: {location}\n"
+                f"ISP: {geo.get('isp', '?')}\nVPN/Proxy: {'YES' if geo.get('is_proxy') else 'No'}",
+                severity="MEDIUM",
+            )
 
         if geo.get("is_proxy") or geo.get("is_hosting"):
             self.notifier.send_alert(
@@ -799,6 +864,22 @@ class BruteForceTracker:
 
         # Check capacity
         self._check_capacity()
+
+    def _prune_details(self, detail_map):
+        """Keep per-IP detail maps bounded to prevent unbounded growth."""
+        detail_capacity = Config.MAX_TRACKED_ATTEMPTS
+        if len(detail_map) <= detail_capacity:
+            return
+
+        over_by = len(detail_map) - detail_capacity
+
+        def _ts(item):
+            detail = item[1]
+            return detail.get("last_seen_ts", 0)
+
+        oldest_ips = heapq.nsmallest(over_by, detail_map.items(), key=_ts)
+        for ip, _ in oldest_ips:
+            detail_map.pop(ip, None)
 
     def get_stats(self):
         with self.lock:
@@ -827,6 +908,8 @@ class BruteForceTracker:
                 ),
                 "uptime_seconds": (datetime.now() - self.stats["start_time"]).total_seconds(),
                 "start_time": self.stats["start_time"].isoformat(),
+                "attacker_details": dict(self.stats["attacker_details"]),
+                "success_details": dict(self.stats["success_details"]),
             }
 
     def force_refresh(self):
