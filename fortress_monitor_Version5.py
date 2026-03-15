@@ -467,6 +467,7 @@ class BruteForceTracker:
         self.alerted_ips = {}                       # ip -> last_alert_time
         self.banned_ips = set()
         self.lock = Lock()
+        self._login_alert_channel_warned = False
 
         # Per-cycle stats
         self._init_cycle_stats()
@@ -695,6 +696,7 @@ class BruteForceTracker:
                 "location": location,
                 "last_seen": event_dt.isoformat(),
             }
+            self._prune_details(self.stats["attacker_details"])
 
         # Log every single failed attempt (this goes to disk immediately — never lost)
         log_entry = (
@@ -807,6 +809,7 @@ class BruteForceTracker:
                 "location": location,
                 "last_seen": event_dt.isoformat(),
             }
+            self._prune_details(self.stats["success_details"])
             current_count = self.cycle_attempt_count
 
         log_entry = (
@@ -831,6 +834,13 @@ class BruteForceTracker:
             )
         )
 
+        if Config.LOGIN_ALERTS_ENABLED and not should_alert_login and not self._login_alert_channel_warned:
+            self.logs.main.warning(
+                "Login alerts are enabled but no notification channel is active. "
+                "Enable WEBHOOK_ENABLED, EMAIL_ENABLED, or DESKTOP_NOTIFY to receive login alerts."
+            )
+            self._login_alert_channel_warned = True
+
         if should_alert_login:
             self.notifier.send_alert(
                 f"LOGIN from {ip}",
@@ -838,6 +848,20 @@ class BruteForceTracker:
                 f"ISP: {geo.get('isp', '?')}\nVPN/Proxy: {'YES' if geo.get('is_proxy') else 'No'}",
                 severity="MEDIUM",
             )
+
+    def _prune_details(self, detail_map):
+        """Keep per-IP detail maps bounded to prevent unbounded growth."""
+        max_entries = Config.MAX_TRACKED_ATTEMPTS
+        if len(detail_map) <= max_entries:
+            return
+
+        over_by = len(detail_map) - max_entries
+        oldest_ips = sorted(
+            detail_map.items(),
+            key=lambda item: item[1].get("last_seen", ""),
+        )[:over_by]
+        for ip, _ in oldest_ips:
+            detail_map.pop(ip, None)
 
         if geo.get("is_proxy") or geo.get("is_hosting"):
             self.notifier.send_alert(
