@@ -696,6 +696,7 @@ class BruteForceTracker:
             self.stats["attacker_details"][ip] = {
                 "location": location,
                 "last_seen": event_dt.isoformat(),
+                "last_seen_ts": ts,
             }
             self._prune_details(self.stats["attacker_details"])
 
@@ -809,6 +810,7 @@ class BruteForceTracker:
             self.stats["success_details"][ip] = {
                 "location": location,
                 "last_seen": event_dt.isoformat(),
+                "last_seen_ts": ts,
             }
             self._prune_details(self.stats["success_details"])
             current_count = self.cycle_attempt_count
@@ -833,12 +835,14 @@ class BruteForceTracker:
         )
         should_alert_login = Config.LOGIN_ALERTS_ENABLED and channel_active
 
-        if Config.LOGIN_ALERTS_ENABLED and not channel_active and not self._login_alert_channel_warned:
-            self.logs.main.warning(
-                "Login alerts are enabled but no notification channel is active. "
-                "Enable WEBHOOK_ENABLED, EMAIL_ENABLED, or DESKTOP_NOTIFY to receive login alerts."
-            )
-            self._login_alert_channel_warned = True
+        if Config.LOGIN_ALERTS_ENABLED and not channel_active:
+            with self.lock:
+                if Config.LOGIN_ALERTS_ENABLED and not channel_active and not self._login_alert_channel_warned:
+                    self.logs.main.warning(
+                        "Login alerts are enabled but no notification channel is active. "
+                        "Enable WEBHOOK_ENABLED, EMAIL_ENABLED, or DESKTOP_NOTIFY to receive login alerts."
+                    )
+                    self._login_alert_channel_warned = True
 
         if should_alert_login:
             self.notifier.send_alert(
@@ -870,10 +874,13 @@ class BruteForceTracker:
         over_by = len(detail_map) - detail_capacity
 
         def _ts(item):
+            detail = item[1]
+            if "last_seen_ts" in detail:
+                return detail.get("last_seen_ts", 0)
             try:
-                return datetime.fromisoformat(item[1].get("last_seen", ""))
+                return datetime.fromisoformat(detail.get("last_seen", "")).timestamp()
             except (TypeError, ValueError):
-                return datetime.min
+                return 0
 
         oldest_ips = heapq.nsmallest(over_by, detail_map.items(), key=_ts)
         for ip, _ in oldest_ips:
