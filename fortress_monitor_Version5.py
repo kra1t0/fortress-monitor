@@ -490,6 +490,8 @@ class BruteForceTracker:
             "attacker_countries": defaultdict(int),
             "attacker_isps": defaultdict(int),
             "methods_seen": defaultdict(int),
+            "attacker_details": {},
+            "success_details": {},
         }
 
     def _load_lifetime_state(self):
@@ -575,8 +577,14 @@ class BruteForceTracker:
                     sorted(self.stats["attacker_isps"].items(), key=lambda x: -x[1])[:30]
                 ),
                 "methods_seen": dict(self.stats["methods_seen"]),
-                "all_attacker_ips": list(self.stats["unique_attacker_ips"]),
-                "all_success_ips": list(self.stats["unique_success_ips"]),
+                "all_attacker_ips": [
+                    {"ip": ip, "location": self.stats["attacker_details"].get(ip, {}).get("location", "Unknown"), "last_seen": self.stats["attacker_details"].get(ip, {}).get("last_seen")}
+                    for ip in sorted(self.stats["unique_attacker_ips"])
+                ],
+                "all_success_ips": [
+                    {"ip": ip, "location": self.stats["success_details"].get(ip, {}).get("location", "Unknown"), "last_seen": self.stats["success_details"].get(ip, {}).get("last_seen")}
+                    for ip in sorted(self.stats["unique_success_ips"])
+                ],
                 "lifetime_stats": dict(self.lifetime),
             }
 
@@ -640,6 +648,8 @@ class BruteForceTracker:
     def record_failure(self, ip, user, port, method, raw_line, timestamp=None):
         """Record a failed login attempt and check for brute force."""
         ts = timestamp or time.time()
+        event_dt = datetime.fromtimestamp(ts)
+        event_time_str = event_dt.strftime("%Y-%m-%d %H:%M:%S")
 
         with self.lock:
             self.stats["total_failed"] += 1
@@ -669,11 +679,16 @@ class BruteForceTracker:
             isp = geo.get("isp", "Unknown")
             if isp != "Unknown":
                 self.stats["attacker_isps"][isp] += 1
+            self.stats["attacker_details"][ip] = {
+                "location": location,
+                "last_seen": event_dt.isoformat(),
+            }
 
         # Log every single failed attempt (this goes to disk immediately — never lost)
         log_entry = (
             f"IP={ip} | User={user} | Port={port} | Method={method} | "
             f"Location={location} | "
+            f"AttemptTime={event_time_str} | "
             f"Attempts={attempt_count}/{Config.MAX_FAILED_ATTEMPTS} | "
             f"Cycle={current_count:,}/{Config.MAX_TRACKED_ATTEMPTS:,} | "
             f"Raw={raw_line.strip()}"
@@ -766,6 +781,9 @@ class BruteForceTracker:
 
     def record_success(self, ip, user, port, method, raw_line):
         """Record a successful login."""
+        ts = time.time()
+        event_dt = datetime.fromtimestamp(ts)
+        event_time_str = event_dt.strftime("%Y-%m-%d %H:%M:%S")
         geo = self.geo.lookup(ip)
         location = self.geo.format_location(geo)
 
@@ -773,6 +791,10 @@ class BruteForceTracker:
             self.stats["total_success"] += 1
             self.stats["unique_success_ips"].add(ip)
             self.cycle_attempt_count += 1
+            self.stats["success_details"][ip] = {
+                "location": location,
+                "last_seen": event_dt.isoformat(),
+            }
             current_count = self.cycle_attempt_count
 
         log_entry = (
@@ -781,11 +803,19 @@ class BruteForceTracker:
             f"Country={geo.get('country', '?')} | City={geo.get('city', '?')} | "
             f"Region={geo.get('region', '?')} | ISP={geo.get('isp', '?')} | "
             f"VPN/Proxy={'YES' if geo.get('is_proxy') else 'No'} | "
+            f"AttemptTime={event_time_str} | "
             f"Cycle={current_count:,}/{Config.MAX_TRACKED_ATTEMPTS:,} | "
             f"Raw={raw_line.strip()}"
         )
         self.logs.success.info(log_entry)
         self.logs.main.info(f"✅ SUCCESSFUL LOGIN | {log_entry}")
+
+        self.notifier.send_alert(
+            f"LOGIN from {ip}",
+            f"User: {user}\nMethod: {method}\nTime: {event_time_str}\nLocation: {location}\n"
+            f"ISP: {geo.get('isp', '?')}\nVPN/Proxy: {'YES' if geo.get('is_proxy') else 'No'}",
+            severity="MEDIUM",
+        )
 
         if geo.get("is_proxy") or geo.get("is_hosting"):
             self.notifier.send_alert(
