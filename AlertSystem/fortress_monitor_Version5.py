@@ -110,7 +110,7 @@ class Config:
     WEBHOOK_ENABLED = False
     WEBHOOK_URL = ""
     # Send a notification for every successful login (alongside attack alerts)
-    LOGIN_ALERTS_ENABLED = True
+    LOGIN_ALERTS_ENABLED = False
 
     # ---- Auto-Ban ----
     AUTO_BAN_ENABLED = True
@@ -822,7 +822,12 @@ class BruteForceTracker:
         self.logs.success.info(log_entry)
         self.logs.main.info(f"✅ SUCCESSFUL LOGIN | {log_entry}")
 
-        if Config.LOGIN_ALERTS_ENABLED:
+        should_alert_login = (
+            Config.LOGIN_ALERTS_ENABLED
+            and (Config.WEBHOOK_ENABLED or Config.EMAIL_ENABLED or Config.DESKTOP_NOTIFY)
+        )
+
+        if should_alert_login:
             self.notifier.send_alert(
                 f"LOGIN from {ip}",
                 f"User: {user}\nMethod: {method}\nTime: {event_time_str}\nLocation: {location}\n"

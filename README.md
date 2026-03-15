@@ -97,7 +97,7 @@ Edit the `Config` class inside the script:
 - **`BAN_WHITELIST`**: Always add your home/office/Tailscale IPs here!
 - **`WEBHOOK_URL`**: Your Discord/Slack webhook for instant alerts.
 - **`AUTO_BAN_ENABLED`**: Set to `True` to enable active `iptables` defense.
-- **Discord alerts for logins**: Set `WEBHOOK_ENABLED = True` and `WEBHOOK_URL` to your Discord webhook to receive alerts on every login and suspected attack, including the exact event time and geolocation for each IP. If you prefer to only receive attack alerts, set `LOGIN_ALERTS_ENABLED = False`.
+- **Discord alerts for logins**: Set `WEBHOOK_ENABLED = True`, `WEBHOOK_URL`, and `LOGIN_ALERTS_ENABLED = True` to receive alerts on every login and suspected attack, including the exact event time and geolocation for each IP. Leave `LOGIN_ALERTS_ENABLED` as `False` if you only want attack alerts.
 
 ### Dashboard (`auth_dashboard.py`)
 
