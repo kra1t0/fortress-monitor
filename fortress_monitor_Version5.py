@@ -53,6 +53,7 @@ import socket
 import smtplib
 import subprocess
 import hashlib
+import heapq
 from datetime import datetime, timedelta
 from collections import defaultdict
 from email.mime.text import MIMEText
@@ -867,13 +868,14 @@ class BruteForceTracker:
             return
 
         over_by = len(detail_map) - detail_capacity
+
         def _ts(item):
             try:
                 return datetime.fromisoformat(item[1].get("last_seen", ""))
             except (TypeError, ValueError):
                 return datetime.min
 
-        oldest_ips = sorted(detail_map.items(), key=_ts)[:over_by]
+        oldest_ips = heapq.nsmallest(over_by, detail_map.items(), key=_ts)
         for ip, _ in oldest_ips:
             detail_map.pop(ip, None)
 
