@@ -837,7 +837,7 @@ class BruteForceTracker:
 
         if Config.LOGIN_ALERTS_ENABLED and not channel_active:
             with self.lock:
-                if Config.LOGIN_ALERTS_ENABLED and not channel_active and not self._login_alert_channel_warned:
+                if not self._login_alert_channel_warned:
                     self.logs.main.warning(
                         "Login alerts are enabled but no notification channel is active. "
                         "Enable WEBHOOK_ENABLED, EMAIL_ENABLED, or DESKTOP_NOTIFY to receive login alerts."
@@ -875,12 +875,7 @@ class BruteForceTracker:
 
         def _ts(item):
             detail = item[1]
-            if "last_seen_ts" in detail:
-                return detail.get("last_seen_ts", 0)
-            try:
-                return datetime.fromisoformat(detail.get("last_seen", "")).timestamp()
-            except (TypeError, ValueError):
-                return 0
+            return detail.get("last_seen_ts", 0)
 
         oldest_ips = heapq.nsmallest(over_by, detail_map.items(), key=_ts)
         for ip, _ in oldest_ips:
