@@ -849,20 +849,6 @@ class BruteForceTracker:
                 severity="MEDIUM",
             )
 
-    def _prune_details(self, detail_map):
-        """Keep per-IP detail maps bounded to prevent unbounded growth."""
-        max_entries = Config.MAX_TRACKED_ATTEMPTS
-        if len(detail_map) <= max_entries:
-            return
-
-        over_by = len(detail_map) - max_entries
-        oldest_ips = sorted(
-            detail_map.items(),
-            key=lambda item: item[1].get("last_seen", ""),
-        )[:over_by]
-        for ip, _ in oldest_ips:
-            detail_map.pop(ip, None)
-
         if geo.get("is_proxy") or geo.get("is_hosting"):
             self.notifier.send_alert(
                 f"SUSPICIOUS SUCCESSFUL LOGIN from {ip}",
@@ -875,6 +861,20 @@ class BruteForceTracker:
 
         # Check capacity
         self._check_capacity()
+
+    def _prune_details(self, detail_map):
+        """Keep per-IP detail maps bounded to prevent unbounded growth."""
+        detail_capacity = Config.MAX_TRACKED_ATTEMPTS
+        if len(detail_map) <= detail_capacity:
+            return
+
+        over_by = len(detail_map) - detail_capacity
+        oldest_ips = sorted(
+            detail_map.items(),
+            key=lambda item: item[1].get("last_seen", ""),
+        )[:over_by]
+        for ip, _ in oldest_ips:
+            detail_map.pop(ip, None)
 
     def get_stats(self):
         with self.lock:
