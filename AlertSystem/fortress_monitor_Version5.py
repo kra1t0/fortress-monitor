@@ -824,7 +824,11 @@ class BruteForceTracker:
 
         should_alert_login = (
             Config.LOGIN_ALERTS_ENABLED
-            and (Config.WEBHOOK_ENABLED or Config.EMAIL_ENABLED or Config.DESKTOP_NOTIFY)
+            and (
+                Config.WEBHOOK_ENABLED
+                or getattr(Config, "EMAIL_ENABLED", False)
+                or getattr(Config, "DESKTOP_NOTIFY", False)
+            )
         )
 
         if should_alert_login:
