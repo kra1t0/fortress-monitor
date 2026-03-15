@@ -109,6 +109,8 @@ class Config:
     # ---- Webhook Alerts ----
     WEBHOOK_ENABLED = False
     WEBHOOK_URL = ""
+    # Send a notification for every successful login (alongside attack alerts)
+    LOGIN_ALERTS_ENABLED = True
 
     # ---- Auto-Ban ----
     AUTO_BAN_ENABLED = True
@@ -554,6 +556,8 @@ class BruteForceTracker:
             cycle_num = self.lifetime.get("cycle_number", 0) + 1
 
             # ---- Build the snapshot ----
+            attacker_details = self.stats["attacker_details"]
+            success_details = self.stats["success_details"]
             snapshot = {
                 "cycle_number": cycle_num,
                 "refresh_reason": reason,
@@ -578,11 +582,19 @@ class BruteForceTracker:
                 ),
                 "methods_seen": dict(self.stats["methods_seen"]),
                 "all_attacker_ips": [
-                    {"ip": ip, "location": self.stats["attacker_details"].get(ip, {}).get("location", "Unknown"), "last_seen": self.stats["attacker_details"].get(ip, {}).get("last_seen")}
+                    {
+                        "ip": ip,
+                        "location": attacker_details.get(ip, {}).get("location", "Unknown"),
+                        "last_seen": attacker_details.get(ip, {}).get("last_seen"),
+                    }
                     for ip in sorted(self.stats["unique_attacker_ips"])
                 ],
                 "all_success_ips": [
-                    {"ip": ip, "location": self.stats["success_details"].get(ip, {}).get("location", "Unknown"), "last_seen": self.stats["success_details"].get(ip, {}).get("last_seen")}
+                    {
+                        "ip": ip,
+                        "location": success_details.get(ip, {}).get("location", "Unknown"),
+                        "last_seen": success_details.get(ip, {}).get("last_seen"),
+                    }
                     for ip in sorted(self.stats["unique_success_ips"])
                 ],
                 "lifetime_stats": dict(self.lifetime),
@@ -810,12 +822,13 @@ class BruteForceTracker:
         self.logs.success.info(log_entry)
         self.logs.main.info(f"✅ SUCCESSFUL LOGIN | {log_entry}")
 
-        self.notifier.send_alert(
-            f"LOGIN from {ip}",
-            f"User: {user}\nMethod: {method}\nTime: {event_time_str}\nLocation: {location}\n"
-            f"ISP: {geo.get('isp', '?')}\nVPN/Proxy: {'YES' if geo.get('is_proxy') else 'No'}",
-            severity="MEDIUM",
-        )
+        if Config.LOGIN_ALERTS_ENABLED:
+            self.notifier.send_alert(
+                f"LOGIN from {ip}",
+                f"User: {user}\nMethod: {method}\nTime: {event_time_str}\nLocation: {location}\n"
+                f"ISP: {geo.get('isp', '?')}\nVPN/Proxy: {'YES' if geo.get('is_proxy') else 'No'}",
+                severity="MEDIUM",
+            )
 
         if geo.get("is_proxy") or geo.get("is_hosting"):
             self.notifier.send_alert(
