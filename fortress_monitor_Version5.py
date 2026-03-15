@@ -857,6 +857,8 @@ class BruteForceTracker:
                 ),
                 "uptime_seconds": (datetime.now() - self.stats["start_time"]).total_seconds(),
                 "start_time": self.stats["start_time"].isoformat(),
+                "attacker_details": dict(self.stats["attacker_details"]),
+                "success_details": dict(self.stats["success_details"]),
             }
 
     def force_refresh(self):
