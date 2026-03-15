@@ -869,10 +869,13 @@ class BruteForceTracker:
             return
 
         over_by = len(detail_map) - detail_capacity
-        oldest_ips = sorted(
-            detail_map.items(),
-            key=lambda item: item[1].get("last_seen", ""),
-        )[:over_by]
+        def _ts(item):
+            try:
+                return datetime.fromisoformat(item[1].get("last_seen", ""))
+            except Exception:
+                return datetime.min
+
+        oldest_ips = sorted(detail_map.items(), key=_ts)[:over_by]
         for ip, _ in oldest_ips:
             detail_map.pop(ip, None)
 
